@@ -1,0 +1,31 @@
+[package]
+name = "lan-share"
+version = "0.1.0"
+edition = "2021"
+description = "局域网文件分享"
+publish = false
+
+[dependencies]
+axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+eframe = "0.31"
+egui = "0.31"
+encoding_rs = "0.8"
+local-ip-address = "0.6"
+mime_guess = "2"
+percent-encoding = "2"
+qrcode = "0.14"
+rfd = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = { version = "0.5", features = ["util"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
