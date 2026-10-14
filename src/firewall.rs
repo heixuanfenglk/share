@@ -5,6 +5,7 @@
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct FirewallSession {
+    #[cfg_attr(not(windows), allow(dead_code))]
     port: u16,
     created: bool,
 }
@@ -37,7 +38,10 @@ impl FirewallSession {
         #[cfg(not(windows))]
         {
             let _ = port;
-            Err("自动放行防火墙目前只支持 Windows。".into())
+            Ok(Self {
+                port,
+                created: false,
+            })
         }
     }
 

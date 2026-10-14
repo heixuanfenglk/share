@@ -18,6 +18,13 @@ impl Default for Config {
 
 impl Config {
     pub fn file_path() -> PathBuf {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home)
+                    .join("Library/Application Support/局域网文件分享/lan-share.json");
+            }
+        }
         std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.join("lan-share.json")))

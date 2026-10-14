@@ -28,7 +28,21 @@ cargo build --release
 
 发布产物：`target/release/lan-share.exe`
 
-## 一键打包（Inno Setup）
+## 一键打包
+
+在仓库根目录执行，生成 `dist/LanShare_Setup_<版本>.exe`。
+
+### macOS / Linux
+
+```bash
+./pack.sh
+./pack.sh --skip-build
+./pack.sh --open
+```
+
+脚本会交叉编译 Windows 程序，再用 NSIS 打出安装包。本机已有 MinGW 和 NSIS 时直接使用；否则在 Homebrew 可用时自动安装。Homebrew 不可用时，会把 LLVM MinGW 和 NSIS 准备到 `~/.cache/lan-share-pack`（首次需要联网）。可执行文件静态链接运行库，安装包里只需放入 `lan-share.exe`。
+
+### Windows
 
 需要已安装 [Inno Setup 6](https://jrsoftware.org/isinfo.php)。
 
@@ -44,7 +58,17 @@ pack.bat
 .\packaging\build.ps1 -OpenDist
 ```
 
-流程：`cargo build --release` → 调用 `ISCC` 编译 `packaging/lan-share.iss` → 输出安装包到 `dist/LanShare_Setup_*.exe`。
+在 Windows 的 Git Bash 里执行 `./pack.sh` 时，会转去调用上述 Inno Setup 流程。
+
+### macOS 安装盘
+
+```bash
+./pack-mac.sh
+./pack-mac.sh --skip-build
+./pack-mac.sh --open
+```
+
+在 Mac 上编译原生程序，生成 `dist/LanShare_<版本>.dmg`。打开后把「局域网文件分享」拖到「应用程序」。macOS 上的配置写在 `~/Library/Application Support/局域网文件分享/lan-share.json`，不会自动修改系统防火墙。
 
 图标资源在 `assets/icon.ico`（可用 `python assets/gen_icon.py` 重新生成）。
 

@@ -93,7 +93,12 @@ impl LanShareApp {
         let status = if config.paths.is_empty() {
             "请先选择要分享的文件夹。未选择前不会使用当前目录。".into()
         } else {
-            "已停止。点击开始后会放行防火墙并提供下载。".into()
+            if cfg!(windows) {
+                "已停止。点击开始后会放行防火墙并提供下载。"
+            } else {
+                "已停止。点击开始后即可在局域网下载。"
+            }
+            .into()
         };
         let page = if config.paths.is_empty() {
             Page::Settings
@@ -180,7 +185,11 @@ impl LanShareApp {
         self.save();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.phase = Phase::Starting;
-        self.status = format!("正在放行防火墙 TCP {}，并启动服务…", self.port);
+        self.status = if cfg!(windows) {
+            format!("正在放行防火墙 TCP {}，并启动服务…", self.port)
+        } else {
+            format!("正在启动服务，端口 {}…", self.port)
+        };
         self.toast.clear();
         let port = self.port;
         let paths = self.paths.clone();
@@ -204,7 +213,12 @@ impl LanShareApp {
         }
         self.phase = Phase::Stopping;
         self.stop_flag.store(true, Ordering::SeqCst);
-        self.status = "正在停止服务。如果弹出授权窗口，请允许它移除防火墙规则。".into();
+        self.status = if cfg!(windows) {
+            "正在停止服务。如果弹出授权窗口，请允许它移除防火墙规则。"
+        } else {
+            "正在停止服务…"
+        }
+        .into();
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
@@ -246,8 +260,11 @@ impl LanShareApp {
                     .map(|share| (share.id, share.label_path))
                     .collect();
                 self.phase = Phase::Running;
-                self.status =
-                    format!("服务已启动，防火墙已放行 TCP {port}。同一局域网设备可直接访问。");
+                self.status = if cfg!(windows) {
+                    format!("服务已启动，防火墙已放行 TCP {port}。同一局域网设备可直接访问。")
+                } else {
+                    format!("服务已启动，端口 {port}。同一局域网设备可直接访问。")
+                };
             }
             ServerEvent::Failed(message) => {
                 self.phase = Phase::Stopped;
@@ -415,7 +432,7 @@ impl LanShareApp {
                     egui::Color32::from_rgb(243, 255, 246),
                     can_start,
                 )
-                .on_hover_text("开始时会请求管理员权限放行防火墙，停止时移除本次添加的规则。");
+                .on_hover_text(start_hint());
                 if start.clicked() {
                     self.start();
                 }
@@ -612,7 +629,7 @@ impl LanShareApp {
                         .min_size(egui::vec2(180.0, 52.0))
                         .corner_radius(12),
                     )
-                    .on_hover_text("开始时会请求管理员权限放行防火墙，停止时移除本次添加的规则。");
+                    .on_hover_text(start_hint());
                 if start.clicked() {
                     self.start();
                 }
@@ -867,7 +884,11 @@ fn status_pill(ui: &mut egui::Ui, phase: &Phase, stoppable: bool) -> egui::Respo
         );
     }
     if can_stop {
-        response.on_hover_text("点击停止服务，并移除本次添加的防火墙规则。")
+        response.on_hover_text(if cfg!(windows) {
+            "点击停止服务，并移除本次添加的防火墙规则。"
+        } else {
+            "点击停止服务。"
+        })
     } else {
         response
     }
@@ -1003,19 +1024,13 @@ fn qr_image(text: &str) -> Option<egui::ColorImage> {
 }
 
 fn install_fonts(ctx: &egui::Context) {
-    let candidates = [
-        r"C:\Windows\Fonts\Deng.ttf",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simfang.ttf",
-    ];
-    let Some(bytes) = candidates.iter().find_map(|path| std::fs::read(path).ok()) else {
+    let Some((bytes, index)) = load_system_cjk_font() else {
         return;
     };
+    let mut font = egui::FontData::from_owned(bytes);
+    font.index = index;
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "cjk".to_owned(),
-        Arc::new(egui::FontData::from_owned(bytes)),
-    );
+    fonts.font_data.insert("cjk".to_owned(), Arc::new(font));
     if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
         family.insert(0, "cjk".to_owned());
     }
@@ -1023,6 +1038,161 @@ fn install_fonts(ctx: &egui::Context) {
         family.push("cjk".to_owned());
     }
     ctx.set_fonts(fonts);
+}
+
+fn load_system_cjk_font() -> Option<(Vec<u8>, u32)> {
+    for path in cjk_font_paths() {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        if let Some(index) = cjk_face_index(&bytes) {
+            return Some((bytes, index));
+        }
+    }
+    None
+}
+
+fn cjk_font_paths() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &[
+            r"C:\Windows\Fonts\Deng.ttf",
+            r"C:\Windows\Fonts\simhei.ttf",
+            r"C:\Windows\Fonts\simfang.ttf",
+        ]
+    } else if cfg!(target_os = "macos") {
+        &[
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/STHeiti Medium.ttc",
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+        ]
+    } else {
+        &[]
+    }
+}
+
+/// Pick a Simplified Chinese face. Collection offsets are from the start of the file.
+/// Face 0 of PingFang.ttc is PingFang HK, which is not the face we want.
+fn cjk_face_index(data: &[u8]) -> Option<u32> {
+    if data.len() < 12 {
+        return None;
+    }
+    if &data[..4] != b"ttcf" {
+        return Some(0);
+    }
+    let count = read_u32(data, 8)?.min(64);
+    let mut best: Option<(i32, u32)> = None;
+    for index in 0..count {
+        let Some(offset) = read_u32(data, 12 + index as usize * 4) else {
+            continue;
+        };
+        let score = face_score(data, offset as usize);
+        if score > 0 && best.map(|(prev, _)| score > prev).unwrap_or(true) {
+            best = Some((score, index));
+        }
+    }
+    best.map(|(_, index)| index)
+}
+
+fn face_score(data: &[u8], font_offset: usize) -> i32 {
+    let num_tables = read_u16(data, font_offset + 4).unwrap_or(0) as usize;
+    for table in 0..num_tables {
+        let record = font_offset + 12 + table * 16;
+        let Some(tag) = data.get(record..record + 4) else {
+            break;
+        };
+        if tag != b"name" {
+            continue;
+        }
+        let Some(offset) = read_u32(data, record + 8) else {
+            break;
+        };
+        let Some(length) = read_u32(data, record + 12) else {
+            break;
+        };
+        let start = offset as usize;
+        let end = start.saturating_add(length as usize);
+        let Some(table) = data.get(start..end) else {
+            break;
+        };
+        return name_table_score(table);
+    }
+    0
+}
+
+fn name_table_score(table: &[u8]) -> i32 {
+    let count = read_u16(table, 2).unwrap_or(0) as usize;
+    let string_offset = read_u16(table, 4).unwrap_or(0) as usize;
+    let mut best = 0;
+    for index in 0..count {
+        let record = 6 + index * 12;
+        let platform = read_u16(table, record).unwrap_or(0);
+        let name_id = read_u16(table, record + 6).unwrap_or(0);
+        if platform != 3 || (name_id != 1 && name_id != 16) {
+            continue;
+        }
+        let length = read_u16(table, record + 8).unwrap_or(0) as usize;
+        let offset = read_u16(table, record + 10).unwrap_or(0) as usize;
+        let start = string_offset + offset;
+        let Some(raw) = table.get(start..start + length) else {
+            continue;
+        };
+        let Ok(name) = decode_utf16_be(raw) else {
+            continue;
+        };
+        best = best.max(score_font_name(&name));
+    }
+    best
+}
+
+fn score_font_name(name: &str) -> i32 {
+    let name = name.trim();
+    if name.starts_with('.') {
+        return 0;
+    }
+    let lower = name.to_ascii_lowercase();
+    let mut score = 0;
+    if name.contains('简') {
+        score += 100;
+    }
+    if lower.contains(" sc") || lower.ends_with("sc") {
+        score += 80;
+    }
+    if lower.contains("sans gb") || lower.contains(" gb") {
+        score += 60;
+    }
+    if name.contains('繁') || name.contains('港') {
+        score -= 100;
+    }
+    if lower.contains(" tc")
+        || lower.ends_with("tc")
+        || lower.contains(" hk")
+        || lower.ends_with("hk")
+    {
+        score -= 100;
+    }
+    score
+}
+
+fn decode_utf16_be(raw: &[u8]) -> Result<String, ()> {
+    if raw.len() % 2 != 0 {
+        return Err(());
+    }
+    let units: Vec<u16> = raw
+        .chunks_exact(2)
+        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16(&units).map_err(|_| ())
+}
+
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    let bytes = data.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+    let bytes = data.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 fn install_style(ctx: &egui::Context) {
@@ -1097,7 +1267,70 @@ fn open_browser(url: &str) {
         .spawn();
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn open_browser(url: &str) {
+    let _ = std::process::Command::new("open").arg(url).spawn();
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn open_browser(url: &str) {
     let _ = url;
+}
+
+fn start_hint() -> &'static str {
+    if cfg!(windows) {
+        "开始时会请求管理员权限放行防火墙，停止时移除本次添加的规则。"
+    } else {
+        "开始后，同一局域网内的设备可以用浏览器访问。"
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::{cjk_face_index, score_font_name};
+
+    #[test]
+    fn prefers_simplified_family_names() {
+        assert!(score_font_name("PingFang SC") > 0);
+        assert!(score_font_name("苹方-简") > 0);
+        assert!(score_font_name("Hiragino Sans GB") > 0);
+        assert!(score_font_name("Heiti SC") > 0);
+        assert!(score_font_name("PingFang HK") < 0);
+        assert!(score_font_name("PingFang TC") < 0);
+        assert!(score_font_name("苹方-港") < 0);
+        assert_eq!(score_font_name(".PingFang SC"), 0);
+    }
+
+    #[test]
+    fn pingfang_collection_uses_simplified_face() {
+        let path = "/System/Library/Fonts/PingFang.ttc";
+        if !std::path::Path::new(path).exists() {
+            return;
+        }
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(cjk_face_index(&bytes), Some(2));
+    }
+
+    #[test]
+    fn system_cjk_font_draws_ui_text() {
+        let Some((bytes, index)) = super::load_system_cjk_font() else {
+            return;
+        };
+        let mut font = egui::FontData::from_owned(bytes);
+        font.index = index;
+        let mut fonts = egui::FontDefinitions::default();
+        fonts
+            .font_data
+            .insert("cjk".to_owned(), std::sync::Arc::new(font));
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "cjk".to_owned());
+        let mut fonts = egui::epaint::text::FontsImpl::new(1.0, 2048, fonts);
+        assert!(fonts.has_glyphs(
+            &egui::FontId::proportional(16.0),
+            "局域网文件分享"
+        ));
+    }
 }
