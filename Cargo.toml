@@ -5,12 +5,15 @@ edition = "2021"
 description = "局域网文件分享"
 publish = false
 
+[build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 axum = "0.8"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 eframe = "0.31"
 egui = "0.31"
 encoding_rs = "0.8"
+image = { version = "0.25", default-features = false, features = ["png"] }
 local-ip-address = "0.6"
 mime_guess = "2"
 percent-encoding = "2"

@@ -31,7 +31,8 @@ fn main() {
         viewport: egui::ViewportBuilder::default()
             .with_title("局域网文件分享")
             .with_inner_size([720.0, 360.0])
-            .with_min_inner_size([640.0, 320.0]),
+            .with_min_inner_size([640.0, 320.0])
+            .with_icon(app_icon()),
         ..Default::default()
     };
     if let Err(err) = eframe::run_native(
@@ -354,7 +355,8 @@ impl LanShareApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 match self.page {
                     Page::Settings => {
-                        if back_to_qr_button(ui).clicked() {
+                        let can_open_qr = matches!(self.phase, Phase::Running) && !self.urls.is_empty();
+                        if back_to_qr_button(ui, can_open_qr).clicked() {
                             self.page = Page::Qr;
                         }
                     }
@@ -645,6 +647,11 @@ impl LanShareApp {
                     )
                     .truncate(),
                 );
+                ui.label(
+                    egui::RichText::new("微信扫码后，请点右上角 ··· 用浏览器打开")
+                        .color(CLAY)
+                        .size(13.0),
+                );
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -672,6 +679,7 @@ impl LanShareApp {
                     }
                 });
                 if self.urls.len() > 1 {
+                    ui.add_space(4.0);
                     ui.label(egui::RichText::new("地址").color(MUTED).size(13.0));
                     let mut selected = self.primary_url.clone();
                     for url in self.urls.clone() {
@@ -736,18 +744,28 @@ fn draw_path_rows(
     }
 }
 
-fn back_to_qr_button(ui: &mut egui::Ui) -> egui::Response {
-    ui.add(
-        egui::Button::new(
-            egui::RichText::new("← 二维码")
-                .size(14.0)
-                .color(egui::Color32::WHITE),
-        )
-        .fill(ACCENT)
-        .min_size(egui::vec2(96.0, 32.0))
-        .corner_radius(8),
-    )
-    .on_hover_text("返回二维码页面")
+fn back_to_qr_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let response = ui
+        .add_enabled(
+            enabled,
+            egui::Button::new(
+                egui::RichText::new("← 二维码")
+                    .size(14.0)
+                    .color(if enabled {
+                        egui::Color32::WHITE
+                    } else {
+                        MUTED
+                    }),
+            )
+            .fill(if enabled { ACCENT } else { DISABLED })
+            .min_size(egui::vec2(96.0, 32.0))
+            .corner_radius(8),
+        );
+    if enabled {
+        response.on_hover_text("返回二维码页面")
+    } else {
+        response.on_hover_text("服务启动后才能查看二维码")
+    }
 }
 
 fn settings_button(ui: &mut egui::Ui) -> egui::Response {
@@ -1056,6 +1074,18 @@ fn install_style(ctx: &egui::Context) {
             egui::FontId::new(14.0, egui::FontFamily::Monospace),
         );
     });
+}
+
+fn app_icon() -> egui::IconData {
+    let image = image::load_from_memory(include_bytes!("../assets/icon.png"))
+        .expect("icon.png")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    }
 }
 
 #[cfg(windows)]

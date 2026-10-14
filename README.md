@@ -28,6 +28,26 @@ cargo build --release
 
 发布产物：`target/release/lan-share.exe`
 
+## 一键打包（Inno Setup）
+
+需要已安装 [Inno Setup 6](https://jrsoftware.org/isinfo.php)。
+
+```bat
+pack.bat
+```
+
+或：
+
+```powershell
+.\packaging\build.ps1
+.\packaging\build.ps1 -SkipBuild
+.\packaging\build.ps1 -OpenDist
+```
+
+流程：`cargo build --release` → 调用 `ISCC` 编译 `packaging/lan-share.iss` → 输出安装包到 `dist/LanShare_Setup_*.exe`。
+
+图标资源在 `assets/icon.ico`（可用 `python assets/gen_icon.py` 重新生成）。
+
 ## 使用说明
 
 1. 打开程序，点右上角齿轮进入设置

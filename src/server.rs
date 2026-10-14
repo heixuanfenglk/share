@@ -1,7 +1,6 @@
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -231,7 +230,6 @@ fn collect_entries(root: &Path, rel: &str, dir: &Path) -> Result<Vec<Entry>, std
             name,
             is_dir: meta.is_dir(),
             size: meta.len(),
-            modified: meta.modified().ok(),
         });
     }
     items.sort_by(|left, right| {
@@ -247,7 +245,6 @@ struct Entry {
     name: String,
     is_dir: bool,
     size: u64,
-    modified: Option<SystemTime>,
 }
 
 async fn serve_file(path: &Path, query: FileQuery) -> Response {
@@ -330,9 +327,7 @@ async fn serve_file(path: &Path, query: FileQuery) -> Response {
 fn index_page(state: &AppState, req: &Request<Body>) -> Response {
     let mut cards = String::new();
     if state.shares.is_empty() {
-        cards.push_str(
-            r#"<div class="empty-pick"><p class="empty-title">还没有配置分享路径</p><p>请在分享程序里选择文件夹。未选择前，这里不会列出当前目录。</p></div>"#,
-        );
+        cards.push_str(r#"<p class="empty">暂无分享内容</p>"#);
     }
     for share in state.shares.iter() {
         let href = if share.is_dir {
@@ -347,14 +342,8 @@ fn index_page(state: &AppState, req: &Request<Body>) -> Response {
             escape(&share.id)
         ));
     }
-    let count = state.shares.len();
-    let sub = if count == 0 {
-        "请先在本机选择要分享的文件夹。".to_string()
-    } else {
-        format!("{count} 个位置可以浏览和下载。")
-    };
     let body = format!(
-        r#"<header class="mast"><p class="eyebrow">Local network</p><h1>共享目录</h1><p class="sub">{sub}</p><div class="mark" aria-hidden="true">内网<span>共享</span></div></header><section class="stack">{cards}</section>"#
+        r#"<header class="mast"><h1>共享目录</h1></header><section class="stack">{cards}</section>"#
     );
     let host = host_of(req);
     html(StatusCode::OK, "共享目录", &body, &host)
@@ -384,31 +373,28 @@ fn render_listing(share: &Share, rel: &str, entries: &[Entry]) -> String {
         "上一级"
     };
     let mut rows = format!(
-        r#"<a class="row up" href="{up_href}"><span class="name">{up_label}</span><span class="meta">返回</span><span class="go">打开</span></a>"#
+        r#"<a class="row up" href="{up_href}"><span class="name">{up_label}</span><span class="go">打开</span></a>"#
     );
     if entries.is_empty() {
-        rows.push_str(r#"<p class="empty">这个文件夹是空的。</p>"#);
+        rows.push_str(r#"<p class="empty">空文件夹</p>"#);
     }
     for entry in entries {
         let encoded = encode_component(&entry.name);
         let name = escape(&entry.name);
         if entry.is_dir {
             rows.push_str(&format!(
-                r#"<div class="row"><a class="name" href="{encoded}/">{name}</a><span class="meta">文件夹 · {}</span><a class="open" href="{encoded}/">打开</a></div>"#,
-                format_mtime(entry.modified)
+                r#"<div class="row"><a class="name" href="{encoded}/">{name}</a><span class="meta">文件夹</span><a class="open" href="{encoded}/">打开</a></div>"#
             ));
         } else {
             rows.push_str(&format!(
-                r#"<div class="row"><a class="name" href="{encoded}">{name}</a><span class="meta">{} · {}</span><a class="dl" href="{encoded}?download=1" download aria-label="下载 {name}">下载</a></div>"#,
-                format_size(entry.size),
-                format_mtime(entry.modified)
+                r#"<div class="row"><a class="name" href="{encoded}">{name}</a><span class="meta">{}</span><a class="dl" href="{encoded}?download=1" download aria-label="下载 {name}">下载</a></div>"#,
+                format_size(entry.size)
             ));
         }
     }
     format!(
-        r#"<header class="mast"><p class="eyebrow">Local network</p><h1>{}</h1><p class="sub">{} 项</p><div class="mark" aria-hidden="true">内网<span>共享</span></div></header>{}<section class="stack">{rows}</section>"#,
+        r#"<header class="mast"><h1>{}</h1></header>{}<section class="stack">{rows}</section>"#,
         escape(&here),
-        entries.len(),
         breadcrumbs(share, &parts)
     )
 }
@@ -454,8 +440,7 @@ fn html(status: StatusCode, title: &str, body: &str, host: &str) -> Response {
 
 fn html_error(status: StatusCode, title: &str, message: &str, host: &str) -> Response {
     let body = format!(
-        r#"<header class="mast"><p class="eyebrow">{code}</p><h1>{title}</h1><p class="sub">{message}</p></header><p><a class="open" href="/">回到共享列表</a></p>"#,
-        code = status.as_u16(),
+        r#"<header class="mast"><h1>{title}</h1></header><p class="empty">{message}</p><p><a class="open" href="/">返回</a></p>"#,
         title = escape(title),
         message = escape(message)
     );
@@ -616,14 +601,6 @@ fn format_size(size: u64) -> String {
     }
 }
 
-fn format_mtime(time: Option<SystemTime>) -> String {
-    let Some(time) = time else {
-        return "—".into();
-    };
-    let local = chrono::DateTime::<chrono::Local>::from(time);
-    local.format("%Y-%m-%d %H:%M").to_string()
-}
-
 fn label_for(path: &Path) -> String {
     if let Some(name) = path.file_name() {
         let text = name.to_string_lossy();
@@ -709,12 +686,7 @@ fn norm_key(path: &Path) -> String {
     text.to_lowercase()
 }
 
-fn render_page(title: &str, body: &str, host: &str) -> String {
-    let host_line = if host.is_empty() {
-        "仅供局域网内访问".to_string()
-    } else {
-        format!("来自 {} · 仅供局域网内访问", escape(host))
-    };
+fn render_page(title: &str, body: &str, _host: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="zh-CN">
@@ -725,12 +697,11 @@ fn render_page(title: &str, body: &str, host: &str) -> String {
 <style>
 :root {{
   color-scheme: light;
-  --bg: #e5d8c4;
-  --paper: rgba(247, 241, 230, 0.92);
+  --bg: #f3eadc;
+  --paper: #f7f1e6;
   --ink: #1c1712;
   --muted: #6d6256;
-  --line: rgba(74, 52, 32, 0.16);
-  --stamp: #9d3b2b;
+  --line: rgba(74, 52, 32, 0.14);
   --accent: #0f5e55;
   --accent-ink: #f3fffc;
 }}
@@ -739,136 +710,79 @@ body {{
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  background:
-    radial-gradient(900px 420px at -10% -20%, rgba(255, 248, 236, 0.95), transparent 60%),
-    radial-gradient(680px 360px at 110% -10%, rgba(157, 59, 43, 0.16), transparent 55%),
-    linear-gradient(180deg, #f3eadc 0%, var(--bg) 42%, #d9c7ae 100%);
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
 }}
 main {{
-  width: min(920px, calc(100% - 28px));
+  width: min(760px, calc(100% - 20px));
   margin: 0 auto;
-  padding: 36px 0 72px;
+  padding: 14px 0 28px;
 }}
-.mast {{ position: relative; padding: 8px 120px 8px 0; margin-bottom: 18px; }}
-.eyebrow {{
-  margin: 0 0 8px;
-  color: var(--stamp);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-size: 12px;
-}}
+.mast {{ margin: 0 0 10px; }}
 h1 {{
   margin: 0;
-  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "Noto Serif SC", serif;
-  font-size: clamp(34px, 6vw, 56px);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 0.95;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.25;
 }}
-.sub {{ margin: 10px 0 0; color: var(--muted); }}
-.mark {{
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 96px;
-  height: 96px;
-  border: 2px solid var(--stamp);
-  border-radius: 50%;
-  color: var(--stamp);
-  display: grid;
-  place-items: center;
-  text-align: center;
-  transform: rotate(12deg);
-  letter-spacing: 0.08em;
-  font-family: "Palatino Linotype", Palatino, "Songti SC", serif;
-  font-size: 14px;
-  line-height: 1.35;
-}}
-.mark span {{ display: block; }}
 .crumb {{
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  margin: 0 0 14px;
+  margin: 0 0 10px;
   color: var(--muted);
+  font-size: 13px;
 }}
 .crumb a {{ color: var(--accent); text-decoration: none; }}
-.sep {{ opacity: 0.55; }}
-.stack {{ display: flex; flex-direction: column; gap: 8px; }}
+.sep {{ opacity: 0.5; }}
+.stack {{ display: flex; flex-direction: column; gap: 6px; }}
 .share, .row {{
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 12px 16px;
+  gap: 8px 10px;
   align-items: center;
-  padding: 14px 16px;
+  padding: 10px 12px;
   text-decoration: none;
   color: inherit;
   background: var(--paper);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 10px 30px rgba(58, 36, 14, 0.04);
-  animation: rise 0.28s ease;
+  border-radius: 10px;
 }}
 .share {{ grid-template-columns: auto minmax(0, 1fr) auto; }}
+.row.up {{ grid-template-columns: minmax(0, 1fr) auto; }}
 .share strong, .name {{
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }}
 .name {{ color: inherit; text-decoration: none; }}
 .name:hover, .share:hover strong {{ color: var(--accent); }}
-.kind, .meta {{ color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }}
-.kind {{ letter-spacing: 0.08em; }}
+.kind, .meta {{ color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .go, .open, .dl {{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  min-height: 36px;
-  padding: 0 12px;
+  min-width: 52px;
+  min-height: 30px;
+  padding: 0 10px;
   border-radius: 999px;
   text-decoration: none;
-  font-size: 13px;
+  font-size: 12px;
 }}
 .go, .dl {{ background: var(--accent); color: var(--accent-ink); }}
 .open {{ color: var(--accent); border: 1px solid rgba(15, 94, 85, 0.35); }}
-.empty {{ color: var(--muted); padding: 12px 4px; }}
-.empty-pick {{
-  padding: 28px 22px;
-  background: var(--paper);
-  border: 1px dashed rgba(157, 59, 43, 0.55);
-  border-radius: 16px;
-}}
-.empty-pick .empty-title {{
-  margin: 0 0 8px;
-  color: var(--ink);
-  font-size: 22px;
-  font-weight: 650;
-}}
-.empty-pick p {{ margin: 0; color: var(--muted); font-size: 16px; line-height: 1.5; }}
-footer {{ margin-top: 28px; color: var(--muted); font-size: 13px; }}
-a:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 3px; }}
-@keyframes rise {{
-  from {{ opacity: 0; transform: translateY(8px); }}
-  to {{ opacity: 1; transform: none; }}
-}}
+.empty {{ color: var(--muted); margin: 4px 0; font-size: 13px; }}
+a:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 @media (max-width: 640px) {{
-  .mast {{ padding-right: 0; }}
-  .mark {{ display: none; }}
   .row {{ grid-template-columns: minmax(0, 1fr) auto; }}
-  .meta {{ grid-column: 1 / -1; }}
-}}
-@media (prefers-reduced-motion: reduce) {{
-  .share, .row {{ animation: none; }}
+  .meta {{ display: none; }}
 }}
 </style>
 </head>
 <body>
 <main>
 {body}
-<footer>{host_line}</footer>
 </main>
 </body>
 </html>"#,
